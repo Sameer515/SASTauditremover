@@ -322,7 +322,12 @@ class SnykClient:
                         if project.get("attributes", {}).get("type") == "sast":
                             sast_projects.append(sanitize_project_data(project))
                     
-                    url = data.get("links", {}).get("next")
+                    next_url = data.get("links", {}).get("next")
+                    # Only update URL if it's a relative URL (starts with /)
+                    if next_url and next_url.startswith('/'):
+                        url = f"{self.api_rest_base}{next_url}"
+                    else:
+                        url = next_url
                     
                 except SnykAPIError as e:
                     # If we get a 404, it might mean the organization has no projects yet
