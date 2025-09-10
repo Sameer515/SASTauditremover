@@ -60,16 +60,19 @@ def get_snyk_token() -> str:
         
         if Confirm.ask("Would you like to enter your Snyk API token now?"):
             while True:
-                token = input("\nEnter your Snyk API token: ").strip()
+                # Use getpass to hide token input
+                token = typer.prompt("\nEnter your Snyk API token", hide_input=True).strip()
                 if token:
                     # Optionally validate token format (basic check)
                     if len(token) >= 30:  # Snyk tokens are typically 36+ chars
                         # Ask if user wants to save the token to environment
                         if Confirm.ask("\nWould you like to set this token for the current session?"):
                             os.environ["SNYK_TOKEN"] = token
+                            masked_token = f"{token[:4]}...{token[-4:]}"  # Show first 4 and last 4 chars
                             console.print("\n✅ SNYK_TOKEN has been set for this session.")
                             console.print("To make this permanent, add it to your shell's rc file (e.g., .bashrc, .zshrc):")
-                            console.print(f'  export SNYK_TOKEN="{token}"')
+                            console.print(f'  export SNYK_TOKEN="{token}"', style="dim")
+                            console.print(f"\nToken: {masked_token}", style="dim")
                         return token
                     else:
                         console.print("[red]Invalid token format. Snyk tokens are typically 36+ characters long.[/red]")
