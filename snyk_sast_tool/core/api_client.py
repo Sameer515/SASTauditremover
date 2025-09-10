@@ -34,11 +34,42 @@ class SnykClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             raise SnykAPIError(f"API request failed: {str(e)}")
+            
+    def _make_request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Make an HTTP request with timeout and error handling"""
+        try:
+            # Set default timeout if not provided
+            if 'timeout' not in kwargs:
+                kwargs['timeout'] = (3.05, 27)  # Connect and read timeouts
+                
+            # Create a session for connection pooling
+            with requests.Session() as session:
+                session.headers.update(kwargs.pop('headers', {}))
+                
+                if method.upper() == 'GET':
+                    response = session.get(url, **kwargs)
+                elif method.upper() == 'POST':
+                    response = session.post(url, **kwargs)
+                elif method.upper() == 'PATCH':
+                    response = session.patch(url, **kwargs)
+                elif method.upper() == 'DELETE':
+                    response = session.delete(url, **kwargs)
+                else:
+                    raise SnykAPIError(f"Unsupported HTTP method: {method}")
+                
+                return response
+                
+        except requests.exceptions.Timeout as e:
+            raise SnykAPIError("Request timed out. Please check your connection and try again.")
+        except requests.exceptions.RequestException as e:
+            raise SnykAPIError(f"Request failed: {str(e)}")
+        except Exception as e:
+            raise SnykAPIError(f"Unexpected error: {str(e)}")
     
     def get_organizations(self, group_id: str) -> List[Dict]:
         """Get all organizations in a group"""
         url = f"{self.api_v1_base}/group/{group_id}/orgs"
-        response = requests.post(url, headers=self.headers_v1)
+        response = self._make_request('POST', url, headers=self.headers_v1)
         data = self._handle_response(response)
         return data.get("orgs", [])
     
@@ -46,7 +77,7 @@ class SnykClient:
         """Get SAST settings for an organization"""
         url = f"{self.api_rest_base}/orgs/{org_id}/settings/sast?version={self.api_version}"
         try:
-            response = requests.get(url, headers=self.headers_rest)
+            response = self._make_request('GET', url, headers=self.headers_rest)
             if response.status_code == 404:
                 return {"sast_enabled": False}
             data = self._handle_response(response)
@@ -63,7 +94,7 @@ class SnykClient:
                 "attributes": { "sast_enabled": False }
             }
         }
-        response = requests.patch(url, headers=self.headers_rest, json=payload)
+        response = self._make_request('PATCH', url, headers=self.headers_rest, json=payload)
         self._handle_response(response)
         return True
     
@@ -73,7 +104,7 @@ class SnykClient:
         url = f"{self.api_rest_base}/orgs/{org_id}/projects?version={self.api_version}&limit=100"
         
         while url:
-            response = requests.get(url, headers=self.headers_rest)
+            response = self._make_request('GET', url, headers=self.headers_rest)
             data = self._handle_response(response)
             
             projects = data.get("data", [])
@@ -92,6 +123,6 @@ class SnykClient:
     def delete_project(self, org_id: str, project_id: str) -> bool:
         """Delete a project from an organization"""
         url = f"{self.api_rest_base}/orgs/{org_id}/projects/{project_id}?version={self.api_version}"
-        response = requests.delete(url, headers=self.headers_rest)
+        response = self._make_request('DELETE', url, headers=self.headers_rest)
         self._handle_response(response)
         return True
