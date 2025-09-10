@@ -1,9 +1,13 @@
 import os
+import json
 import typer
-from typing import Optional, List
+import pandas as pd
+from typing import List, Dict, Optional
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
-from rich.progress import Progress
+from rich import print as rprint
+from datetime import datetime
 
 from snyk_sast_tool.core.api_client import SnykClient, SnykAPIError
 from snyk_sast_tool.utils.report_generator import ReportGenerator
@@ -205,24 +209,45 @@ def _validate_org_id(org_id: str) -> str:
         raise typer.Exit(1)
     return org_id.strip()
 
-def _get_orgs_from_file(file_path: str) -> List[dict]:
-    """Read organization IDs and names from a file"""
+def _read_orgs_from_file(file_path: str) -> List[dict]:
+    """Read organization IDs and names from a file (JSON, Excel, or text)"""
     if not os.path.exists(file_path):
         console.print(f"[red]❌ File not found: {file_path}[/red]")
         raise typer.Exit(1)
     
+    file_ext = os.path.splitext(file_path)[1].lower()
     orgs = []
+    
     try:
-        with open(file_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):  # Skip empty lines and comments
-                    parts = line.split(',')
-                    if len(parts) >= 1:
-                        org_id = parts[0].strip()
-                        org_name = parts[1].strip() if len(parts) > 1 else ""
-                        if org_id:  # Only add if org_id is not empty
-                            orgs.append({"id": org_id, "name": org_name})
+        if file_ext == '.json':
+            # Handle JSON format from audit command
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+                for org in data.get('organizations', []):
+                    orgs.append({
+                        'id': org['id'],
+                        'name': org.get('name', '')
+                    })
+        elif file_ext in ['.xlsx', '.xls']:
+            # Handle Excel format from audit command
+            df = pd.read_excel(file_path)
+            for _, row in df.drop_duplicates(subset=['org_id']).iterrows():
+                orgs.append({
+                    'id': str(row['org_id']),
+                    'name': row.get('org_name', '')
+                })
+        else:
+            # Handle plain text format (CSV or one org per line)
+            with open(file_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):  # Skip empty lines and comments
+                        parts = line.split(',')
+                        if len(parts) >= 1:
+                            org_id = parts[0].strip()
+                            org_name = parts[1].strip() if len(parts) > 1 else ""
+                            if org_id:  # Only add if org_id is not empty
+                                orgs.append({"id": org_id, "name": org_name})
         
         if not orgs:
             console.print("[yellow]⚠️  No valid organization entries found in the file[/yellow]")
@@ -230,7 +255,7 @@ def _get_orgs_from_file(file_path: str) -> List[dict]:
             
         return orgs
     except Exception as e:
-        console.print(f"[red]❌ Error reading file: {str(e)}[/red]")
+        console.print(f"[red]❌ Error reading file {file_path}: {str(e)}[/red]")
         raise typer.Exit(1)
 
 @app.command()
@@ -243,7 +268,9 @@ def disable(
         None,
         "--file",
         "-f",
-        help="Path to a file containing organizations to disable (one per line, format: org_id,org_name)",
+        help="Path to a file containing organizations to disable. Supports:"
+             "\n- JSON/Excel from audit command"
+             "\n- Text file with one org per line (format: org_id,org_name)",
         callback=lambda x: x.strip() if x else None
     ),
     skip_confirm: bool = typer.Option(

@@ -23,7 +23,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'snyk-sast-tool=snyk_sast_tool.cli:main',
+            'snyk-sast-tool=snyk_sast_tool.__main__:main',
         ],
     },
     classifiers=[

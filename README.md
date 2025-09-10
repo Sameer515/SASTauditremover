@@ -1,15 +1,16 @@
 # Snyk SAST Management Tool
 
-A powerful command-line tool for auditing and managing Snyk SAST (Static Application Security Testing) settings across multiple organizations.
+A powerful, interactive command-line tool for auditing and managing Snyk SAST (Static Application Security Testing) settings across multiple organizations.
 
 ## Features
 
+- **Interactive Menu**: Easy-to-use numbered menu system
 - **Audit SAST Settings**: Check SAST status across all organizations in a Snyk group
 - **Disable SAST**: Easily disable SAST for specific organizations or multiple organizations from a file
 - **Manage SAST Projects**: List, export, and delete SAST projects
 - **Bulk Operations**: Process multiple organizations or projects using file inputs
 - **Generate Reports**: Export audit results in JSON and Excel formats
-- **User-friendly CLI**: Interactive command-line interface with rich output and confirmation prompts
+- **User-friendly CLI**: Rich output with colors and progress indicators
 
 ## Prerequisites
 
@@ -29,10 +30,27 @@ A powerful command-line tool for auditing and managing Snyk SAST (Static Applica
    pip install -r requirements.txt
    ```
 
-3. (Optional) Install the tool in development mode:
+3. Install the tool in development mode (recommended):
    ```bash
    pip install -e .
    ```
+
+## Quick Start
+
+1. Set your Snyk API token:
+   ```bash
+   export SNYK_TOKEN="your-snyk-api-token-here"
+   ```
+
+2. Run the interactive menu:
+   ```bash
+   snyk-sast-tool
+   ```
+
+3. Follow the on-screen prompts to:
+   - Audit SAST settings
+   - Disable SAST for organizations
+   - Manage SAST projects
 
 ## Configuration
 
@@ -42,19 +60,41 @@ Set your Snyk API token as an environment variable:
 export SNYK_TOKEN="your-snyk-api-token-here"
 ```
 
-## Usage
+## Interactive Menu Usage
+
+After launching `snyk-sast-tool`, you'll see the main menu:
+
+```
+Main Menu:
+1. 🔍 Audit SAST Settings
+2. 🚫 Disable SAST
+3. 🗑️  Delete SAST Projects
+4. 📊 View Reports
+5. 🚪 Exit
+```
 
 ### 1. Audit SAST Settings
 
 Audit SAST settings across all organizations in a group:
+- Enter your Snyk Group ID when prompted
+- Choose output format (JSON, Excel, or both)
+- Reports will be saved with timestamps
 
-```bash
-python -m snyk_sast_tool.cli audit --group-id YOUR_GROUP_ID
-```
+### 2. Disable SAST
 
-Options:
-- `--output`, `-o`: Output filename prefix (default: "report")
-- `--format`, `-f`: Output format: `json`, `excel`, or `both` (default: "both")
+Disable SAST for one or more organizations:
+- Enter organization ID directly
+- Or provide a file with organization IDs
+- Supports JSON/Excel from audit reports
+- Confirmation before disabling
+
+### 3. Delete SAST Projects
+
+Manage SAST projects:
+- List all SAST projects in an organization
+- Delete specific or all projects
+- Export projects before deletion
+- Supports file input for bulk operations
 
 Example:
 ```bash
@@ -123,10 +163,6 @@ Options:
 - `--export`, `-e`: Export projects to file before deletion
 - `--yes`, `-y`: Skip confirmation prompt
 
-## Output Files
-
-- **JSON Report**: Contains detailed audit results in JSON format
-- **Excel Report**: A flattened view of the audit results in Excel format
 
 ## Development
 
