@@ -1,13 +1,21 @@
 import os
+import time
 import requests
-from typing import Dict, Optional, List, Any
-from datetime import datetime
+from typing import Dict, Optional, List, Any, Tuple
+from datetime import datetime, timedelta
 from rich.console import Console
 
 console = Console()
 
 class SnykAPIError(Exception):
     """Custom exception for Snyk API errors"""
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        self.status_code = status_code
+        self.message = message
+        super().__init__(self.message)
+
+class RateLimitExceededError(SnykAPIError):
+    """Raised when the Snyk API rate limit is exceeded"""
     pass
 
 class SnykClient:
@@ -35,84 +43,172 @@ class SnykClient:
             if response.status_code == 204:  # No content
                 return None
             return response.json()
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 429:  # Rate limit exceeded
+                retry_after = int(response.headers.get('Retry-After', 60))
+                raise RateLimitExceededError(
+                    f"Rate limit exceeded. Please wait {retry_after} seconds before retrying.",
+                    status_code=429
+                )
+            try:
+                error_data = response.json()
+                error_msg = error_data.get('message', str(e))
+                if 'errors' in error_data and isinstance(error_data['errors'], list):
+                    error_msg = "; ".join(
+                        f"{err.get('detail', 'Unknown error')} (status: {err.get('status', 'N/A')})"
+                        for err in error_data['errors']
+                    )
+            except ValueError:
+                error_msg = str(e)
+            
+            raise SnykAPIError(f"API request failed: {error_msg}", status_code=response.status_code)
         except requests.exceptions.RequestException as e:
             raise SnykAPIError(f"API request failed: {str(e)}")
             
-    def _make_request(self, method: str, url: str, **kwargs) -> requests.Response:
-        """Make an HTTP request with timeout and error handling"""
-        try:
-            # Set default timeout if not provided
-            if 'timeout' not in kwargs:
-                kwargs['timeout'] = (3.05, 27)  # Connect and read timeouts
+    def _make_request(self, method: str, url: str, max_retries: int = 3, **kwargs) -> requests.Response:
+        """
+        Make an HTTP request with timeout, retry, and error handling
+        
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: URL to make the request to
+            max_retries: Maximum number of retry attempts for rate limits and transient errors
+            **kwargs: Additional arguments to pass to requests.request()
+            
+        Returns:
+            requests.Response: The HTTP response
+            
+        Raises:
+            SnykAPIError: If the request fails after all retries
+        """
+        # Set default timeout if not provided
+        if 'timeout' not in kwargs:
+            kwargs['timeout'] = (10, 30)  # Increased timeouts for better reliability
+            
+        # Set default headers if not provided
+        if 'headers' not in kwargs:
+            kwargs['headers'] = self.headers_rest
+            
+        retry_delay = 1  # Start with 1 second delay
+        
+        for attempt in range(max_retries + 1):  # +1 because we want to try max_retries times after the first attempt
+            try:
+                with requests.Session() as session:
+                    session.headers.update(kwargs.pop('headers', {}))
+                    response = session.request(method, url, **kwargs)
+                    
+                    # Check for rate limiting
+                    if response.status_code == 429:
+                        retry_after = int(response.headers.get('Retry-After', retry_delay))
+                        if attempt < max_retries:
+                            time.sleep(retry_after)
+                            retry_delay *= 2  # Exponential backoff
+                            continue
+                    
+                    return response
+                    
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                if attempt == max_retries:
+                    raise SnykAPIError(f"Connection failed after {max_retries} retries: {str(e)}")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
                 
-            # Create a session for connection pooling
-            with requests.Session() as session:
-                session.headers.update(kwargs.pop('headers', {}))
+            except requests.exceptions.RequestException as e:
+                if attempt == max_retries:
+                    raise SnykAPIError(f"Request failed after {max_retries} retries: {str(e)}")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
                 
-                if method.upper() == 'GET':
-                    response = session.get(url, **kwargs)
-                elif method.upper() == 'POST':
-                    response = session.post(url, **kwargs)
-                elif method.upper() == 'PATCH':
-                    response = session.patch(url, **kwargs)
-                elif method.upper() == 'DELETE':
-                    response = session.delete(url, **kwargs)
-                else:
-                    raise SnykAPIError(f"Unsupported HTTP method: {method}")
-                
-                return response
-                
-        except requests.exceptions.Timeout as e:
-            raise SnykAPIError("Request timed out. Please check your connection and try again.")
-        except requests.exceptions.RequestException as e:
-            raise SnykAPIError(f"Request failed: {str(e)}")
-        except Exception as e:
-            raise SnykAPIError(f"Unexpected error: {str(e)}")
+        raise SnykAPIError(f"Request failed after {max_retries} retries")
     
+    def _process_paginated_response(self, url: str, data_key: str = "data") -> Tuple[List[Dict], Optional[str]]:
+        """
+        Process a paginated API response and return the data and next URL
+        
+        Args:
+            url: The URL to fetch data from
+            data_key: The key in the response containing the data array
+            
+        Returns:
+            Tuple of (data_list, next_url) where next_url is None if there are no more pages
+        """
+        try:
+            response = self._make_request('GET', url)
+            data = self._handle_response(response)
+            
+            # Get the next URL for pagination
+            next_url = None
+            links = data.get('links', {})
+            if 'next' in links and links['next']:
+                next_url = links['next']
+                # Ensure the URL is absolute
+                if next_url.startswith('/'):
+                    # Handle both /rest/... and /v1/... style paths
+                    if next_url.startswith('/rest/'):
+                        next_url = f"https://api.snyk.io{next_url}"
+                    else:
+                        next_url = f"https://api.snyk.io{next_url}"
+                elif not next_url.startswith(('http://', 'https://')):
+                    # If it's not a full URL and not starting with /, assume it's a path
+                    next_url = f"https://api.snyk.io/rest/{next_url.lstrip('/')}"
+            
+            return data.get(data_key, []), next_url
+            
+        except SnykAPIError as e:
+            # If we get a 404, it might mean there are no more results
+            if e.status_code == 404:
+                return [], None
+            raise
+
     def get_organizations(self, group_id: str) -> List[Dict]:
-        """Get all organizations in a group using REST API with pagination support"""
+        """
+        Get all organizations in a group using REST API with pagination support
+        
+        Args:
+            group_id: The Snyk Group ID to fetch organizations from
+            
+        Returns:
+            List of organization dictionaries
+            
+        Raises:
+            SnykAPIError: If there's an error fetching organizations
+        """
+        if not group_id or not isinstance(group_id, str) or len(group_id) < 10:  # Basic validation
+            raise SnykAPIError(f"Invalid Group ID format: '{group_id}'. Please check and try again.")
+            
         all_orgs = []
-        url = f"{self.api_rest_base}/orgs?version={self.api_version}&group_id={group_id}"
-        headers = {**self.headers_rest, "snyk-version": self.api_version}
+        url = f"{self.api_rest_base}/orgs?version={self.api_version}&group_id={group_id}&limit=100"
         
         try:
             while url:
-                try:
-                    response = self._make_request('GET', url, headers=headers)
-                    data = self._handle_response(response)
-                    all_orgs.extend(data.get("data", []))
-                    
-                    # Handle pagination
-                    next_url = data.get('links', {}).get('next')
-                    if next_url:
-                        if next_url.startswith(('http://', 'https://')):
-                            url = next_url
-                        elif next_url.startswith('/rest/'):
-                            url = f"{self.api_rest_base}{next_url[5:]}"
-                        elif next_url.startswith('/'):
-                            url = f"{self.api_rest_base}{next_url}"
-                        else:
-                            url = f"{self.api_rest_base}/{next_url}"
-                    else:
-                        url = None
-                except SnykAPIError as e:
-                    if "404" in str(e):
-                        raise SnykAPIError(f"Group ID '{group_id}' is not valid or you don't have access to it.")
-                    if "400" in str(e):
-                        raise SnykAPIError(f"Invalid Group ID format: '{group_id}'. Please check and try again.")
-                    raise
-                    
+                orgs_batch, next_url = self._process_paginated_response(url)
+                all_orgs.extend(orgs_batch)
+                url = next_url
+                
+                # Add a small delay between paginated requests to avoid rate limiting
+                if url:
+                    time.sleep(0.1)
+            
             if not all_orgs:
-                raise SnykAPIError(f"No organizations found for Group ID: {group_id}")
+                raise SnykAPIError(
+                    f"No organizations found for Group ID: {group_id}. "
+                    "Please verify the Group ID and your access permissions."
+                )
                 
             return all_orgs
             
-        except requests.exceptions.RequestException as e:
-            if "404" in str(e):
-                raise SnykAPIError(f"Group ID '{group_id}' is not valid or you don't have access to it.")
-            if "400" in str(e):
-                raise SnykAPIError(f"Invalid Group ID format: '{group_id}'. Please check and try again.")
-            raise SnykAPIError(f"Failed to fetch organizations: {str(e)}")
+        except SnykAPIError as e:
+            if e.status_code == 404:
+                raise SnykAPIError(
+                    f"Group ID '{group_id}' is not valid or you don't have access to it. "
+                    "Please verify the Group ID and your access permissions."
+                ) from e
+            if e.status_code == 400:
+                raise SnykAPIError(
+                    f"Invalid Group ID format: '{group_id}'. "
+                    "Please check and try again with a valid Group ID."
+                ) from e
+            raise SnykAPIError(f"Failed to fetch organizations: {str(e)}") from e
     
     def get_sast_settings(self, org_id: str) -> Dict:
         """Get SAST settings for an organization"""
@@ -288,7 +384,7 @@ class SnykClient:
     
     def get_sast_projects(self, org_id: str) -> List[Dict]:
         """
-        Get all SAST projects for an organization
+        Get all SAST projects for an organization with pagination support
         
         Args:
             org_id: The organization ID to get projects from
@@ -300,47 +396,90 @@ class SnykClient:
             SnykAPIError: If there's an error fetching projects
         """
         def sanitize_project_data(project: Dict) -> Dict:
-            """Sanitize project data to prevent MarkupError"""
+            """Sanitize project data to prevent MarkupError and ensure consistent format"""
             attrs = project.get("attributes", {})
             return {
                 "id": str(project.get("id", "")),
                 "name": str(attrs.get("name", "")).replace('[', '(').replace(']', ')'),
-                "created": attrs.get("created")
+                "created": attrs.get("created"),
+                "org_id": org_id,
+                "type": attrs.get("type", ""),
+                "status": attrs.get("status", "")
             }
             
+        if not org_id or not isinstance(org_id, str) or len(org_id) < 10:  # Basic validation
+            raise SnykAPIError(f"Invalid Organization ID format: '{org_id}'")
+            
         sast_projects = []
-        url = f"{self.api_rest_base}/orgs/{org_id}/projects?version={self.api_version}&limit=100"
+        # Construct the initial URL with all required parameters
+        url = f"https://api.snyk.io/rest/orgs/{org_id}/projects?version={self.api_version}&limit=100"
         
         try:
+            total_processed = 0
+            start_time = time.time()
+            
             while url:
                 try:
-                    response = self._make_request('GET', url, headers=self.headers_rest)
-                    data = self._handle_response(response)
+                    # Get a batch of projects
+                    projects_batch, next_url = self._process_paginated_response(url)
                     
-                    projects = data.get("data", [])
-                    for project in projects:
+                    # Filter for SAST projects and sanitize data
+                    for project in projects_batch:
                         if project.get("attributes", {}).get("type") == "sast":
                             sast_projects.append(sanitize_project_data(project))
                     
-                    next_url = data.get("links", {}).get("next")
-                    # Only update URL if it's a relative URL (starts with /)
-                    if next_url and next_url.startswith('/'):
-                        url = f"{self.api_rest_base}{next_url}"
-                    else:
-                        url = next_url
+                    total_processed += len(projects_batch)
+                    
+                    # Log progress periodically
+                    if len(sast_projects) > 0 and len(sast_projects) % 50 == 0:
+                        elapsed = time.time() - start_time
+                        rate = total_processed / elapsed if elapsed > 0 else 0
+                        console.print(
+                            f"Processed {total_processed} projects "
+                            f"({len(sast_projects)} SAST) at {rate:.1f} projects/sec",
+                            style="dim"
+                        )
+                    
+                    # Handle pagination
+                    url = next_url
+                    
+                    # Add a small delay between paginated requests to avoid rate limiting
+                    if url:
+                        time.sleep(0.1)
+                        
+                except RateLimitExceededError as e:
+                    # If we hit rate limits, wait and retry
+                    retry_after = int(str(e).split()[-2])  # Extract wait time from error message
+                    console.print(
+                        f"Rate limited. Waiting {retry_after} seconds before retrying...",
+                        style="yellow"
+                    )
+                    time.sleep(retry_after + 1)  # Add 1 second buffer
+                    continue
                     
                 except SnykAPIError as e:
                     # If we get a 404, it might mean the organization has no projects yet
-                    if "404" in str(e):
+                    if e.status_code == 404:
                         break
                     raise
+            
+            # Log completion
+            elapsed = time.time() - start_time
+            if elapsed > 0:
+                rate = total_processed / elapsed
+                console.print(
+                    f"Completed processing {total_processed} projects "
+                    f"({len(sast_projects)} SAST) in {elapsed:.1f} seconds "
+                    f"({rate:.1f} projects/sec)",
+                    style="green"
+                )
                     
+            return sast_projects
+            
         except Exception as e:
             error_msg = f"Error fetching SAST projects for org {org_id}: {str(e)}"
             error_msg = error_msg.replace('[', '(').replace(']', ')')
             raise SnykAPIError(error_msg) from e
-        
-        return sast_projects
     
     def delete_project(self, org_id: str, project_id: str) -> bool:
         """Delete a project from an organization"""
