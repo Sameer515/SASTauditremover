@@ -5,10 +5,11 @@ A powerful command-line tool for auditing and managing Snyk SAST (Static Applica
 ## Features
 
 - **Audit SAST Settings**: Check SAST status across all organizations in a Snyk group
-- **Disable SAST**: Easily disable SAST for specific organizations
-- **Manage SAST Projects**: List and delete SAST projects
+- **Disable SAST**: Easily disable SAST for specific organizations or multiple organizations from a file
+- **Manage SAST Projects**: List, export, and delete SAST projects
+- **Bulk Operations**: Process multiple organizations or projects using file inputs
 - **Generate Reports**: Export audit results in JSON and Excel formats
-- **User-friendly CLI**: Interactive command-line interface with rich output
+- **User-friendly CLI**: Interactive command-line interface with rich output and confirmation prompts
 
 ## Prerequisites
 
@@ -60,21 +61,67 @@ Example:
 python -m snyk_sast_tool.cli audit -g YOUR_GROUP_ID -o sast_audit -f both
 ```
 
-### 2. Disable SAST for an Organization
+### 2. Disable SAST for Organizations
 
-Disable SAST for a specific organization:
+Disable SAST for a single organization:
 
 ```bash
-python -m snyk_sast_tool.cli disable ORG_ID --name "Organization Name"
+python -m snyk_sast_tool.cli disable ORG_ID
 ```
 
-### 3. Delete SAST Projects
+Disable SAST for multiple organizations from a file:
+
+```bash
+python -m snyk_sast_tool.cli disable --file organizations.txt
+```
+
+File format (one organization per line):
+```
+org_id_1,Organization Name 1
+org_id_2,Organization Name 2
+# This is a comment
+org_id_3  # Name is optional
+```
+
+Options:
+- `--file`, `-f`: Path to file containing organizations
+- `--yes`, `-y`: Skip confirmation prompt
+
+### 3. Manage SAST Projects
 
 Delete specific SAST projects from an organization:
 
 ```bash
 python -m snyk_sast_tool.cli delete-projects ORG_ID PROJECT_ID1 PROJECT_ID2
 ```
+
+Delete all SAST projects from an organization:
+```bash
+python -m snyk_sast_tool.cli delete-projects ORG_ID
+```
+
+Export projects before deletion:
+```bash
+python -m snyk_sast_tool.cli delete-projects ORG_ID --export projects_backup.csv
+```
+
+Delete projects from a file:
+```bash
+python -m snyk_sast_tool.cli delete-projects ORG_ID --file projects_to_delete.txt
+```
+
+File format (one project per line):
+```
+project_id_1,Project Name 1
+project_id_2,Project Name 2
+# This is a comment
+project_id_3  # Name is optional
+```
+
+Options:
+- `--file`, `-f`: Path to file containing project IDs
+- `--export`, `-e`: Export projects to file before deletion
+- `--yes`, `-y`: Skip confirmation prompt
 
 ## Output Files
 

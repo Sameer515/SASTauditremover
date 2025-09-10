@@ -2,6 +2,9 @@ import os
 import requests
 from typing import Dict, Optional, List, Any
 from datetime import datetime
+from rich.console import Console
+
+console = Console()
 
 class SnykAPIError(Exception):
     """Custom exception for Snyk API errors"""
@@ -118,15 +121,41 @@ class SnykClient:
     def disable_sast(self, org_id: str) -> bool:
         """Disable SAST for an organization"""
         url = f"{self.api_rest_base}/orgs/{org_id}/settings/sast?version={self.api_version}"
+        
+        # First, get the current settings to ensure we have the latest data
+        try:
+            current_settings = self.get_sast_settings(org_id)
+            if not current_settings.get('sast_enabled', True):
+                return True  # Already disabled
+        except SnykAPIError as e:
+            console.print(f"[yellow]⚠️  Could not fetch current SAST settings: {str(e)}[/yellow]")
+        
+        # Prepare the payload with exact structure required by the API
         payload = {
             "data": {
-                "type": "sast_settings",
-                "attributes": { "sast_enabled": False }
+                "attributes": {
+                    "sast_enabled": False
+                },
+                "id": org_id,
+                "type": "text"
             }
         }
-        response = self._make_request('PATCH', url, headers=self.headers_rest, json=payload)
-        self._handle_response(response)
-        return True
+        
+        headers = {
+            "Content-Type": "application/vnd.api+json",
+            "Authorization": f"token {self.token}"
+        }
+        
+        try:
+            response = self._make_request('PATCH', url, headers=headers, json=payload)
+            self._handle_response(response)
+            return True
+        except SnykAPIError as e:
+            # Check if the error indicates SAST is already disabled
+            if any(msg in str(e).lower() for msg in ["already disabled", "not enabled"]):
+                return True
+            console.print(f"[red]❌ Error disabling SAST: {str(e)}[/red]")
+            raise
     
     def get_sast_projects(self, org_id: str) -> List[Dict]:
         """Get all SAST projects for an organization"""
