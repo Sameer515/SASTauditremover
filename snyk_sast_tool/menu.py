@@ -3,6 +3,7 @@ import sys
 import json
 import glob
 import typer
+import requests
 from typing import Optional, List, Dict, Any
 from rich.console import Console
 from rich.prompt import Prompt, Confirm
@@ -935,20 +936,21 @@ def main():
     # Check for SNYK_TOKEN at startup
     try:
         token = get_snyk_token()
-        # Test the token by making a simple API call
-        # First create a client to get the group ID
+        # Test the token by making a request to /user/me endpoint
         client = SnykClient(token)
-        # Get organizations to verify the token is valid
-        # We'll use a try-except to handle any API errors
         try:
-            orgs = client.get_organizations("dummy-group")
-            # If we get here, the token is valid even if no orgs are found
-        except SnykAPIError as e:
-            # If the error is about group not found, the token is still valid
-            if "group not found" in str(e).lower() or "not found" in str(e).lower():
-                pass  # Token is valid, just the group wasn't found
-            else:
-                raise  # Re-raise other API errors
+            # Make a direct request to the /user/me endpoint
+            response = requests.get(
+                f"{client.api_v1_base}/user/me",
+                headers={"Authorization": f"token {token}"},
+                timeout=10
+            )
+            response.raise_for_status()  # Will raise an exception for 4XX/5XX responses
+            user_data = response.json()
+            if not user_data.get('id'):
+                raise SnykAPIError("Invalid response from Snyk API")
+        except requests.exceptions.RequestException as e:
+            raise SnykAPIError(f"Failed to validate token: {str(e)}")
     except Exception as e:
         console.print(f"\n[red]❌ Error: {str(e)}[/red]")
         console.print("[yellow]Please check your SNYK_TOKEN and try again.[/yellow]")
