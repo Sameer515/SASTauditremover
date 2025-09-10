@@ -4,9 +4,17 @@ import typer
 import pandas as pd
 from typing import List, Dict, Optional
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import (
+    Progress, 
+    SpinnerColumn, 
+    BarColumn, 
+    TimeElapsedColumn, 
+    TimeRemainingColumn,
+    TextColumn
+)
 from rich.table import Table
 from rich import print as rprint
+from rich.text import Text
 from datetime import datetime
 
 from snyk_sast_tool.core.api_client import SnykClient, SnykAPIError
@@ -15,62 +23,176 @@ from snyk_sast_tool.utils.report_generator import ReportGenerator
 app = typer.Typer(help="Snyk SAST Management Tool")
 console = Console()
 
+import time
+from typing import List, Dict, Any
+
 class SnykSASTTool:
     def __init__(self, token: str):
         self.client = SnykClient(token)
         self.report_generator = ReportGenerator()
+        # Rate limiting - 60 requests per minute (1 request per second with some buffer)
+        self.last_request_time = 0
+        self.min_request_interval = 1.1  # seconds between requests
+        
+    def _rate_limit(self):
+        """Enforce rate limiting between API calls"""
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.min_request_interval:
+            time.sleep(self.min_request_interval - elapsed)
+        self.last_request_time = time.time()
+        
+    def enable_sast(self, org_id: str, org_name: str = "") -> bool:
+        """Enable SAST for a specific organization"""
+        if not org_id or not org_id.strip():
+            console.print(Text("❌ Organization ID cannot be empty", style="red"))
+            return False
+            
+        try:
+            self._rate_limit()  # Apply rate limiting
+            return self.client.enable_sast(org_id, org_name)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "not found" in error_msg:
+                console.print(Text(f"❌ Organization not found: {org_name or org_id}", style="red"))
+            elif "permission" in error_msg:
+                console.print(Text(f"❌ Permission denied for organization: {org_name or org_id}", style="red"))
+            else:
+                console.print(Text(f"❌ Error enabling SAST for {org_name or org_id}: {str(e)}", style="red"))
+            return False
     
     def audit_organizations(self, group_id: str) -> dict:
         """Audit SAST settings across organizations in a group"""
-        with Progress() as progress:
-            task = progress.add_task("[cyan]Auditing organizations...", total=100)
+        def sanitize_message(msg):
+            if not msg:
+                return "Unknown error"
+            # Remove any rich formatting tags and square brackets
+            import re
+            msg = re.sub(r'\[\/?[^\]]+\]', '', str(msg))
+            return msg.replace('[', '(').replace(']', ')').strip()
             
-            orgs = self.client.get_organizations(group_id)
-            if not orgs:
-                console.print("[red]❌ No organizations found or error occurred.[/red]")
-                return {}
-            
-            progress.update(task, advance=20, total=len(orgs) + 20)
-            
-            audit_results = {
-                "group_id": group_id,
-                "sast_enabled_orgs": [],
-                "sast_disabled_orgs": []
-            }
-            
-            for i, org in enumerate(orgs, 1):
-                org_name = org.get('attributes', {}).get('name', f"Organization {i}")
-                org_id = org.get('id')
-                progress.update(task, description=f"[cyan]Checking {org_name}...")
+        try:
+            with Progress(
+                SpinnerColumn(),
+                "•",
+                "[progress.description]{task.description}",
+                BarColumn(bar_width=None),
+                "[progress.percentage]{task.percentage:>3.0f}%",
+                "•",
+                TimeElapsedColumn(),
+                "•",
+                TimeRemainingColumn(),
+                console=console,
+                transient=True
+            ) as progress:
+                # Add initial task
+                task = progress.add_task(
+                    "Auditing organizations...",
+                    total=100,
+                    start=False
+                )
                 
-                settings = self.client.get_sast_settings(org_id)
-                org_data = {
-                    "id": org_id,
-                    "name": org_name,
-                    "settings": settings
-                }
-                
-                if settings and settings.get("sast_enabled"):
-                    org_data["sast_projects"] = self.client.get_sast_projects(org_id)
-                    audit_results["sast_enabled_orgs"].append(org_data)
-                    console.print(f"[green]✓[/green] {org_name} (ID: {org_id}): SAST Enabled")
-                else:
-                    audit_results["sast_disabled_orgs"].append(org_data)
-                    console.print(f"[yellow]•[/yellow] {org_name} (ID: {org_id}): SAST Disabled")
-                
-                progress.update(task, advance=1, completed=20+i)
-            
-            return audit_results
+                try:
+                    orgs = self.client.get_organizations(group_id)
+                    if not orgs:
+                        error_msg = Text("❌ ", style="red")
+                        error_msg.append("No organizations found in the specified group", style="red")
+                        console.print(error_msg)
+                        return {"group_id": group_id, "sast_enabled_orgs": [], "sast_disabled_orgs": []}
+                    
+                    # Start the task with the total number of orgs + 20 for initial setup
+                    total_steps = len(orgs) + 20
+                    progress.update(task, total=total_steps, completed=20, start=True)
+                    
+                    audit_results = {
+                        "group_id": group_id,
+                        "sast_enabled_orgs": [],
+                        "sast_disabled_orgs": []
+                    }
+                    
+                    for i, org in enumerate(orgs, 1):
+                        try:
+                            org_attrs = org.get('attributes', {})
+                            org_name = org_attrs.get('name', f"Organization {i}")
+                            org_id = org.get('id')
+                            
+                            if not org_id:
+                                console.print(Text("⚠️  Skipping organization - missing ID", style="yellow"))
+                                continue
+                            
+                            # Update task description
+                            progress.update(
+                                task,
+                                description=f"Auditing {org_name[:20]}..." if len(org_name) > 20 else f"Auditing {org_name}...",
+                                refresh=True
+                            )
+                            
+                            settings = self.client.get_sast_settings(org_id)
+                            org_data = {
+                                "id": org_id,
+                                "name": org_name,
+                                "settings": settings
+                            }
+                            
+                            if settings and settings.get("sast_enabled"):
+                                try:
+                                    org_data["sast_projects"] = self.client.get_sast_projects(org_id)
+                                    audit_results["sast_enabled_orgs"].append(org_data)
+                                    
+                                    success_msg = Text("✓ ", style="green")
+                                    success_msg.append(f"{org_name} (ID: {org_id}): ")
+                                    success_msg.append("SAST Enabled", style="green")
+                                    console.print(success_msg)
+                                except Exception as e:
+                                    error_msg = Text("❌ ", style="red")
+                                    error_msg.append(f"Error getting projects for {org_name}: {str(e)}", style="red")
+                                    console.print(error_msg)
+                                    continue
+                            else:
+                                audit_results["sast_disabled_orgs"].append(org_data)
+                                disabled_msg = Text("• ", style="yellow")
+                                disabled_msg.append(f"{org_name} (ID: {org_id}): ")
+                                disabled_msg.append("SAST Disabled", style="yellow")
+                                console.print(disabled_msg)
+                            
+                            # Update progress
+                            progress.update(task, advance=1, refresh=True)
+                            
+                        except Exception as e:
+                            error_msg = Text("❌ ", style="red")
+                            error_msg.append(f"Error processing organization {org_name or 'unknown'}: {str(e)}", style="red")
+                            console.print(error_msg)
+                            continue
+                            
+                    return audit_results
+
+                except SnykAPIError as e:
+                    error_msg = Text("❌ ", style="red")
+                    error_msg.append(f"API Error: {str(e)}", style="red")
+                    console.print(error_msg)
+                    raise
+                except Exception as e:
+                    error_msg = Text("❌ ", style="red")
+                    error_msg.append(f"Unexpected error: {str(e)}", style="red")
+                    console.print(error_msg)
+                    raise
+                    
+        except Exception as e:
+            error_msg = Text("❌ ", style="red")
+            error_msg.append(f"Audit failed: {str(e)}", style="red")
+            console.print(error_msg)
+            raise
     
     def disable_sast(self, org_id: str, org_name: str = "") -> bool:
         """Disable SAST for a specific organization"""
         if not org_id or not org_id.strip():
-            console.print("[red]❌ Organization ID cannot be empty[/red]")
+            console.print(Text("❌ Organization ID cannot be empty", style="red"))
             return False
             
         org_id = org_id.strip()
         
         try:
+            self._rate_limit()  # Apply rate limiting
+            
             if not org_name:
                 # Try to get the organization name
                 try:
@@ -87,18 +209,21 @@ class SnykSASTTool:
             
             console.print(f"\n[bold]Disabling SAST for {org_name} (ID: {org_id})[/bold]")
             
-            success = self.client.disable_sast(org_id)
-            if success:
-                console.print(f"[green]✓ Successfully disabled SAST for {org_name}[/green]")
+            result = self.client.disable_sast(org_id, org_name)
+            if result:
+                console.print(f"[green]✅ Successfully disabled SAST for {org_name}[/green]")
             else:
-                console.print(f"[yellow]! SAST was already disabled for {org_name}[/yellow]")
-            return success
+                console.print(f"[yellow]⚠️  SAST was already disabled for {org_name}[/yellow]")
+            return result
             
-        except SnykAPIError as e:
-            console.print(f"[red]❌ Error disabling SAST for {org_id}: {str(e)}[/red]")
-            return False
         except Exception as e:
-            console.print(f"[red]❌ Unexpected error processing {org_id}: {str(e)}[/red]")
+            error_msg = str(e).lower()
+            if "not found" in error_msg:
+                console.print(Text(f"❌ Organization not found: {org_name or org_id}", style="red"))
+            elif "permission" in error_msg:
+                console.print(Text(f"❌ Permission denied for organization: {org_name or org_id}", style="red"))
+            else:
+                console.print(Text(f"❌ Error disabling SAST for {org_name or org_id}: {str(e)}", style="red"))
             return False
     
     def delete_sast_projects(self, org_id: str, project_ids: List[str]) -> dict:
@@ -158,8 +283,8 @@ class SnykSASTTool:
             # Confirm before deletion
             if not typer.confirm(f"Are you sure you want to delete {len(project_ids)} SAST projects from {org_name}?"):
                 console.print("[yellow]Operation cancelled by user.[/yellow]")
-                return {"success": [], "failed": []}
-                
+                return
+        
             # Delete the projects
             return self.delete_sast_projects(org_id, project_ids)
             

@@ -1,16 +1,16 @@
 # Snyk SAST Management Tool
 
-A powerful, interactive command-line tool for auditing and managing Snyk SAST (Static Application Security Testing) settings across multiple organizations.
+A powerful, interactive command-line tool for auditing and managing Snyk SAST (Static Application Security Testing) settings across multiple organizations. This tool provides a user-friendly interface for enabling/disabling SAST scanning and managing SAST projects at scale.
 
 ## Features
 
-- **Interactive Menu**: Easy-to-use numbered menu system
-- **Audit SAST Settings**: Check SAST status across all organizations in a Snyk group
-- **Disable SAST**: Easily disable SAST for specific organizations or multiple organizations from a file
-- **Manage SAST Projects**: List, export, and delete SAST projects
-- **Bulk Operations**: Process multiple organizations or projects using file inputs
-- **Generate Reports**: Export audit results in JSON and Excel formats
-- **User-friendly CLI**: Rich output with colors and progress indicators
+- **Interactive Menu**: Easy-to-use numbered menu system with rich text formatting
+- **SAST Toggle**: Enable or disable SAST scanning for organizations
+- **Project Management**: List, export, and delete SAST projects
+- **Bulk Operations**: Process multiple organizations or projects using file inputs (JSON/XLSX)
+- **Audit & Reports**: Check SAST status and generate detailed reports in multiple formats
+- **User-friendly CLI**: Rich output with colors, progress bars, and clear status indicators
+- **Safe Operations**: Confirmation prompts and dry-run options for destructive actions
 
 ## Prerequisites
 
@@ -67,7 +67,7 @@ After launching `snyk-sast-tool`, you'll see the main menu:
 ```
 Main Menu:
 1. 🔍 Audit SAST Settings
-2. 🚫 Disable SAST
+2. 🚫 Toggle SAST Scanning
 3. 🗑️  Delete SAST Projects
 4. 📊 View Reports
 5. 🚪 Exit
@@ -80,21 +80,35 @@ Audit SAST settings across all organizations in a group:
 - Choose output format (JSON, Excel, or both)
 - Reports will be saved with timestamps
 
-### 2. Disable SAST
+### 2. Toggle SAST Scanning
 
-Disable SAST for one or more organizations:
-- Enter organization ID directly
-- Or provide a file with organization IDs
-- Supports JSON/Excel from audit reports
-- Confirmation before disabling
+Enable or disable SAST scanning for organizations:
+- Toggle SAST for a single organization by ID
+- Process multiple organizations from a file (JSON/XLSX)
+- Supports organization lists from audit reports
+- Interactive confirmation before making changes
+- Clear success/failure feedback
+
+Supported file formats for organization lists:
+- JSON: `[{"id": "org-id", "name": "Org Name"}, ...]`
+- Excel/CSV: Must contain 'id' and 'name' columns
 
 ### 3. Delete SAST Projects
 
-Manage SAST projects:
-- List all SAST projects in an organization
-- Delete specific or all projects
-- Export projects before deletion
-- Supports file input for bulk operations
+Manage SAST projects with precision:
+- List all SAST projects across multiple organizations
+- Delete all projects or select specific ones
+- Export projects to file before deletion
+- Supports organization selection from file (JSON/XLSX)
+- Progress tracking for bulk operations
+- Detailed success/failure reporting
+
+Project deletion workflow:
+1. Select organizations (single or multiple from file)
+2. View projects in each organization
+3. Choose to delete all or select specific projects
+4. Confirm before deletion
+5. View detailed results
 
 Example:
 ```bash
@@ -164,6 +178,21 @@ Options:
 - `--yes`, `-y`: Skip confirmation prompt
 
 
+## Recent Updates
+
+### v1.2.0 (2024-09-10)
+- Added support for enabling/disabling SAST scanning
+- Improved organization and project selection menus
+- Enhanced file input handling (JSON/XLSX)
+- Better error handling and user feedback
+- Progress indicators for long-running operations
+- Improved code structure and maintainability
+
+### v1.1.0 (2024-09-05)
+- Initial release with basic SAST audit functionality
+- Support for disabling SAST across organizations
+- Project management capabilities
+
 ## Development
 
 ### Project Structure
@@ -172,17 +201,19 @@ Options:
 snyk-sast-tool/
 ├── snyk_sast_tool/
 │   ├── __init__.py
-│   ├── cli.py              # Main CLI interface
+│   ├── menu.py             # Interactive menu system
 │   ├── core/
 │   │   ├── __init__.py
 │   │   └── api_client.py   # Snyk API client
 │   └── utils/
+│       ├── __init__.py
 │       └── report_generator.py  # Report generation utilities
 ├── tests/                  # Unit tests
 ├── .gitignore
 ├── LICENSE
 ├── README.md
 ├── requirements.txt
+├── requirements-dev.txt    # Development dependencies
 └── setup.py
 ```
 
