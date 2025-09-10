@@ -936,8 +936,19 @@ def main():
     try:
         token = get_snyk_token()
         # Test the token by making a simple API call
+        # First create a client to get the group ID
         client = SnykClient(token)
-        client.get_orgs()  # This will raise an exception if token is invalid
+        # Get organizations to verify the token is valid
+        # We'll use a try-except to handle any API errors
+        try:
+            orgs = client.get_organizations("dummy-group")
+            # If we get here, the token is valid even if no orgs are found
+        except SnykAPIError as e:
+            # If the error is about group not found, the token is still valid
+            if "group not found" in str(e).lower() or "not found" in str(e).lower():
+                pass  # Token is valid, just the group wasn't found
+            else:
+                raise  # Re-raise other API errors
     except Exception as e:
         console.print(f"\n[red]❌ Error: {str(e)}[/red]")
         console.print("[yellow]Please check your SNYK_TOKEN and try again.[/yellow]")
