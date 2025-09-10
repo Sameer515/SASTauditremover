@@ -44,8 +44,10 @@ A powerful, interactive command-line tool for auditing and managing Snyk SAST (S
 
 2. Run the interactive menu:
    ```bash
-   snyk-sast-tool
+   python -m snyk_sast_tool
    ```
+   
+   The tool will guide you through setting up your token if it's not already set.
 
 3. Follow the on-screen prompts to:
    - Audit SAST settings

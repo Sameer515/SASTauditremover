@@ -46,10 +46,40 @@ def print_header():
     )
 
 def get_snyk_token() -> str:
-    """Get Snyk API token from environment or prompt."""
+    """Get Snyk API token from environment or prompt.
+    
+    Returns:
+        str: The Snyk API token
+    """
     token = os.getenv("SNYK_TOKEN")
     if not token:
-        token = Prompt.ask("🔑 Enter your Snyk API token", password=True)
+        console.print("\n[bold yellow]SNYK_TOKEN environment variable is not set.[/bold yellow]")
+        console.print("You can set it by running:")
+        console.print("  export SNYK_TOKEN='your-snyk-token-here'\n")
+        
+        if Confirm.ask("Would you like to enter your Snyk API token now?"):
+            while True:
+                token = input("\nEnter your Snyk API token: ").strip()
+                if token:
+                    # Optionally validate token format (basic check)
+                    if len(token) >= 30:  # Snyk tokens are typically 36+ chars
+                        # Ask if user wants to save the token to environment
+                        if Confirm.ask("\nWould you like to set this token for the current session?"):
+                            os.environ["SNYK_TOKEN"] = token
+                            console.print("\n✅ SNYK_TOKEN has been set for this session.")
+                            console.print("To make this permanent, add it to your shell's rc file (e.g., .bashrc, .zshrc):")
+                            console.print(f'  export SNYK_TOKEN="{token}"')
+                        return token
+                    else:
+                        console.print("[red]Invalid token format. Snyk tokens are typically 36+ characters long.[/red]")
+                
+                if not Confirm.ask("Try again?"):
+                    console.print("\n[red]SNYK_TOKEN is required to use this tool. Exiting...[/red]")
+                    sys.exit(1)
+        else:
+            console.print("\n[red]SNYK_TOKEN is required to use this tool. Exiting...[/red]")
+            sys.exit(1)
+    
     return token
 
 def get_group_id() -> str:
@@ -731,20 +761,22 @@ def show_delete_projects_menu():
         # Show projects by organization
         project_map = {}
         total_projects = 0
+        project_choices = []
+        
+        console.print("\n[bold]Available SAST Projects:[/bold]")
         
         for org_name, projects in all_projects.items():
             console.print(Text(f"\n[bold]Organization: {org_name}[/bold]"))
             console.print(Text(f"Found {len(projects)} SAST projects:"))
             
             org_projects = []
-            for i, proj in enumerate(projects[:10], 1):
+            for i, proj in enumerate(projects, 1):
                 proj_id = proj.get('id', '')
                 proj_name = proj.get('name', 'Unnamed')
-                console.print(f"  {i}. {proj_name} ({proj_id})")
+                choice_num = len(project_choices) + 1
+                console.print(f"  {choice_num}. {proj_name} ({proj_id})")
                 org_projects.append({"id": proj_id, "name": proj_name})
-                
-            if len(projects) > 10:
-                console.print(f"  ... and {len(projects) - 10} more")
+                project_choices.append((org_name, proj_id))
                 
             project_map[org_name] = org_projects
             total_projects += len(projects)
@@ -757,7 +789,7 @@ def show_delete_projects_menu():
         # Get action
         console.print("\n[bold]Select action:[/bold]")
         console.print("1. Delete all projects")
-        console.print("2. Select specific projects to delete")
+        console.print("2. Select specific projects to delete (enter numbers)")
         console.print("3. Back to organization selection\n")
         
         action = input("Select an option [3]: ").strip() or "3"
@@ -783,68 +815,36 @@ def show_delete_projects_menu():
                 project_ids.extend([p['id'] for p in projects])
                 selected_orgs.append(org_name)
                 
-        elif action == "2":  # Select projects
-            console.print("\n[bold]Select organizations to include:[/bold]")
-            org_list = list(all_projects.keys())
-            
-            for i, org_name in enumerate(org_list, 1):
-                console.print(f"{i}. {org_name} ({len(all_projects[org_name])} projects)")
-            
-            console.print(f"{len(org_list) + 1}. Select all organizations")
-            console.print(f"{len(org_list) + 2}. Cancel\n")
-            
+        elif action == "2":  # Select specific projects
             try:
-                selected = input("Enter organization numbers (comma-separated): ").strip()
+                console.print("\n[bold]Enter the numbers of the projects to delete (comma-separated):[/bold]")
+                console.print("Example: 1,3,5")
+                console.print("Or type 'all' to select all projects")
+                console.print("Press Enter to cancel\n")
+                
+                selected = input("Your selection: ").strip()
+                
                 if not selected:
-                    console.print(Text("No organizations selected.", style="yellow"))
+                    console.print(Text("Operation cancelled.", style="yellow"))
                     input("\nPress Enter to continue...")
                     continue
                     
-                if selected == str(len(org_list) + 1):  # Select all
-                    selected_orgs = org_list
-                elif selected == str(len(org_list) + 2):  # Cancel
-                    continue
-                else:
-                    indices = [int(i.strip()) - 1 for i in selected.split(",")]
-                    selected_orgs = [org_list[i] for i in indices if 0 <= i < len(org_list)]
-                    
-                if not selected_orgs:
-                    console.print(Text("No valid organizations selected.", style="yellow"))
-                    input("\nPress Enter to continue...")
-                    continue
-                    
-                # Now select projects from selected orgs
-                console.print("\n[bold]Select projects to delete:[/bold]")
-                project_choices = []
-                
-                for org_name in selected_orgs:
-                    projects = all_projects[org_name]
-                    console.print(f"\n[bold]{org_name}:[/bold]")
-                    for i, proj in enumerate(projects, 1):
-                        proj_id = proj['id']
-                        proj_name = proj['name']
-                        project_choices.append((org_name, proj_id, proj_name))
-                        console.print(f"  {len(project_choices)}. {proj_name} ({proj_id})")
-                
-                console.print(f"\n{len(project_choices) + 1}. Select all projects")
-                console.print(f"{len(project_choices) + 2}. Cancel\n")
-                
-                selected = input("Enter project numbers to delete (comma-separated): ").strip()
-                if not selected:
-                    console.print(Text("No projects selected.", style="yellow"))
-                    input("\nPress Enter to continue...")
-                    continue
-                    
-                if selected == str(len(project_choices) + 1):  # Select all
+                if selected.lower() == 'all':
                     project_ids = [p[1] for p in project_choices]
-                elif selected == str(len(project_choices) + 2):  # Cancel
-                    continue
+                    selected_orgs = list(set(p[0] for p in project_choices))
                 else:
                     try:
-                        indices = [int(i.strip()) - 1 for i in selected.split(",")]
-                        project_ids = [project_choices[i][1] for i in indices if 0 <= i < len(project_choices)]
-                    except (ValueError, IndexError):
-                        console.print(Text("❌ Invalid selection.", style="red"))
+                        indices = [int(i.strip()) - 1 for i in selected.split(",") if i.strip().isdigit()]
+                        valid_indices = [i for i in indices if 0 <= i < len(project_choices)]
+                        
+                        if not valid_indices:
+                            raise ValueError("No valid project numbers selected.")
+                            
+                        project_ids = [project_choices[i][1] for i in valid_indices]
+                        selected_orgs = list(set(project_choices[i][0] for i in valid_indices))
+                        
+                    except (ValueError, IndexError) as e:
+                        console.print(Text(f"❌ Error: {str(e)}", style="red"))
                         input("\nPress Enter to continue...")
                         continue
                         
@@ -932,6 +932,18 @@ def show_delete_projects_menu():
 
 def main():
     """Main menu loop."""
+    # Check for SNYK_TOKEN at startup
+    try:
+        token = get_snyk_token()
+        # Test the token by making a simple API call
+        client = SnykClient(token)
+        client.get_orgs()  # This will raise an exception if token is invalid
+    except Exception as e:
+        console.print(f"\n[red]❌ Error: {str(e)}[/red]")
+        console.print("[yellow]Please check your SNYK_TOKEN and try again.[/yellow]")
+        input("\nPress Enter to exit...")
+        sys.exit(1)
+    
     while True:
         try:
             choice = show_main_menu()
@@ -945,26 +957,23 @@ def main():
             elif choice == "4":
                 show_reports_menu()
             elif choice == "5":
-                console.print("\n👋 Goodbye!")
+                console.print("\n[bold]Goodbye![/bold]")
                 break
+            else:
+                console.print(Text("⚠️  Invalid choice. Please try again.", style="yellow"))
+                input("\nPress Enter to continue...")
                 
         except KeyboardInterrupt:
-            console.print("\n[yellow]Returning to main menu...[/yellow]")
-            continue
+            console.print("\n\n[bold yellow]Operation cancelled by user.[/bold yellow]")
+            if Confirm.ask("\nDo you want to exit?"):
+                console.print("\n[bold]Goodbye![/bold]")
+                break
         except Exception as e:
-            error_msg = Text()
-            error_msg.append("\n❌ ", style="red")
-            error_msg.append("An error occurred: ")
-            error_msg.append(str(e), style="red")
-            console.print(error_msg)
-            
+            import traceback
+            debug_info = traceback.format_exc()
+            console.print(Text(f"❌ An error occurred: {str(e)}", style="red"))
             if os.getenv("DEBUG"):
-                import traceback
-                debug_info = Text()
-                debug_info.append("\nDebug info:\n", style="dim")
-                debug_info.append(traceback.format_exc(), style="dim")
                 console.print(debug_info)
-                
             input("\nPress Enter to continue...")
 
 if __name__ == "__main__":
