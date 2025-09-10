@@ -12,7 +12,7 @@ class SnykClient:
         self.token = token
         self.api_v1_base = "https://api.snyk.io/v1"
         self.api_rest_base = "https://api.snyk.io/rest"
-        self.api_version = "2024-05-24"
+        self.api_version = "2024-10-15"
         
         self.headers_v1 = {
             "Authorization": f"token {self.token}",
@@ -67,11 +67,35 @@ class SnykClient:
             raise SnykAPIError(f"Unexpected error: {str(e)}")
     
     def get_organizations(self, group_id: str) -> List[Dict]:
-        """Get all organizations in a group"""
-        url = f"{self.api_v1_base}/group/{group_id}/orgs"
-        response = self._make_request('POST', url, headers=self.headers_v1)
-        data = self._handle_response(response)
-        return data.get("orgs", [])
+        """Get all organizations in a group using REST API with pagination support"""
+        all_orgs = []
+        url = f"{self.api_rest_base}/orgs?version={self.api_version}&group_id={group_id}"
+        headers = {**self.headers_rest, "snyk-version": self.api_version}
+        
+        while url:
+            response = self._make_request('GET', url, headers=headers)
+            data = self._handle_response(response)
+            all_orgs.extend(data.get("data", []))
+            
+            # Handle pagination
+            next_url = data.get('links', {}).get('next')
+            if next_url:
+                if next_url.startswith(('http://', 'https://')):
+                    # Full URL provided
+                    url = next_url
+                elif next_url.startswith('/rest/'):
+                    # Remove the leading /rest since api_rest_base already includes it
+                    url = f"{self.api_rest_base}{next_url[5:]}"
+                elif next_url.startswith('/'):
+                    # Relative URL, prepend base URL
+                    url = f"{self.api_rest_base}{next_url}"
+                else:
+                    # Handle any other URL format
+                    url = f"{self.api_rest_base}/{next_url}"
+            else:
+                url = None
+                
+        return all_orgs
     
     def get_sast_settings(self, org_id: str) -> Dict:
         """Get SAST settings for an organization"""
@@ -81,7 +105,13 @@ class SnykClient:
             if response.status_code == 404:
                 return {"sast_enabled": False}
             data = self._handle_response(response)
-            return data.get("data", {}).get("attributes", {})
+            settings = data.get("data", {}).get("attributes", {})
+            # Ensure consistent return format
+            return {
+                "sast_enabled": settings.get("sast_enabled", False),
+                "sast_autofix_enabled": settings.get("sast_autofix_enabled", False),
+                "sast_autofix_pr_enabled": settings.get("sast_autofix_pr_enabled", False)
+            }
         except SnykAPIError:
             return {"sast_enabled": False}
     
