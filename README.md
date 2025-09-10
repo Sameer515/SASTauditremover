@@ -97,18 +97,25 @@ Supported file formats for organization lists:
 
 Manage SAST projects with precision:
 - List all SAST projects across multiple organizations
-- Delete all projects or select specific ones
+- Delete all projects or select specific ones using simple number selection
 - Export projects to file before deletion
-- Supports organization selection from file (JSON/XLSX)
 - Progress tracking for bulk operations
 - Detailed success/failure reporting
 
 Project deletion workflow:
-1. Select organizations (single or multiple from file)
-2. View projects in each organization
-3. Choose to delete all or select specific projects
-4. Confirm before deletion
-5. View detailed results
+1. View all projects with sequential numbering
+2. Select projects to delete by entering numbers (e.g., "1,3,5") or type 'all' to select all
+3. Confirm before deletion
+4. View detailed results
+
+Example selection:
+```
+1. project-1 (org-1)
+2. project-2 (org-1)
+3. project-3 (org-2)
+
+Enter numbers (e.g., '1,3') or 'all': 1,3
+```
 
 Example:
 ```bash
@@ -182,6 +189,7 @@ Options:
 
 ### v1.2.0 (2024-09-10)
 - Added support for enabling/disabling SAST scanning
+- Simplified project deletion workflow with direct project selection
 - Improved organization and project selection menus
 - Enhanced file input handling (JSON/XLSX)
 - Better error handling and user feedback
