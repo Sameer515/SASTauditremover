@@ -8,4 +8,4 @@ typer==0.12.3
 
 # Required dependencies with pinned versions
 typing-extensions==4.12.2  # Required for Python < 3.11
-urllib3==2.5.0  # Fix for CVE-2025-50181 and CVE-2025-50182
+urllib3==2.6.0  # Fix for CVE-2025-50181 and CVE-2025-50182
