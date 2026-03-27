@@ -1,5 +1,5 @@
 # Core dependencies with security updates
-requests==2.32.4  # Fix for CVE-2024-47081
+requests==2.33.0  # Fix for CVE-2024-47081
 pandas==2.2.2
 openpyxl==3.1.2
 python-dotenv==1.0.1
